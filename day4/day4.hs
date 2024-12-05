@@ -46,20 +46,6 @@ tableXmasCount (x : xs) =
       "" -> tableXmasCount xs
       _  -> 1 + tableXmasCount (post : xs)
 
--- filter a row, by replacing all chars by '.'
--- apart from those As which are a part of MAS or SAM
-process :: String -> String
-process [] = []
-process s  =
-  let
-    (pre,found,post) = (s =~ "MAS|SAM") :: (String,String,String)
-  in
-    case found of
-      "" -> ['.' | _ <- [1 .. length s]]
-      _  -> ['.' | _ <- [1 .. length pre]]
-         ++ ".A"
-         ++ process (last found : post)
-
 -- reverse a table
 revTable :: Table -> Table
 revTable t = reverse $ fmap reverse t
@@ -72,38 +58,50 @@ xMasCount t = sum . (fmap tableXmasCount)
   <*> [ t, transpose t, diag1, diag2, diag3, diag4 ]
   where ((diag1, diag2), (diag3, diag4)) = diagonals t
 
--- given a position function pf and a table,
--- compute the positions (in the original table, using
--- pf) of As which are part of MAS or SAM
-validAPos :: (Int -> Int -> (Int,Int)) -> Table -> [(Int,Int)]
-validAPos pf t = do j <- [0 .. dim - 1]
-                    i <- [0 .. dim - 1]
-                    if (processedT !! j) !! i == 'A'
-                      then return $ pf i j
-                      else []
-  where dim = length t
-        processedT = fmap process t
+-- merging the diagonal pieces back into one table
+-- if ((d1,d2),(d3,d4)) are the diagonals computed via diagonals,
+-- then mergeRows (transpose d1, transpose d2) and
+--      mergeRows (transpose d4, transpose d3) both
+-- yield the initial table
+mergeRows :: (Table,Table) -> Table
+mergeRows ((r1 : r1s),(r2 : r2s)) =
+  ((dropWhile (== '.') r1) ++ (takeWhile (/= '.') r2))
+  : mergeRows (r1s,r2s)
+mergeRows _                       = []
+  
+-- checking if two rows agree on the positions of A
+overlap :: (Row,Row) -> Int
+overlap (rw1,rw2) = foldl
+  (\r (r1,r2) -> if (r1,r2) == ('A','A')
+                    then r + 1
+                    else r
+  )
+  0
+  $ zip rw1 rw2
 
--- check if an element occurs more often than once in a table
-multiOccurs :: Eq a => [a] -> [a]
-multiOccurs [] = []
-multiOccurs (x : xs) | x `elem` xs = x : multiOccurs xs
-                     | otherwise   = multiOccurs xs
-
--- compute all positions of As that lie on two
--- diagonals
-allValidAPos :: Table -> [(Int,Int)]
-allValidAPos t = nub . multiOccurs 
-  $ concat [ validAPos (\i j -> (i, j - i)) d1
-           , validAPos (\i j -> (i, j - i + dim)) d2
-           , validAPos (\i j -> (i, i + j)) d3
-           , validAPos (\i j -> (i, j + i - dim)) d4
-           ]
-  where dim = length t
-        ((d1,d2),(d3,d4)) = diagonals t
+-- filter a row, by replacing all chars by '.'
+-- apart from those As which are a part of MAS or SAM
+process :: String -> String
+process [] = []
+process s  =
+  let
+    (pre,found,post) = (s =~ "MAS|SAM") :: (String,String,String)
+  in
+    case found of
+      "" -> fmap (\c -> if c == '.' then '.' else '?') s
+      _  -> fmap (\c -> if c == '.' then '.' else '?') pre
+         ++ "?A"
+         ++ process (last found : post)
 
 crossMasCount :: Table -> Int
-crossMasCount t = length $ allValidAPos t
+crossMasCount t = foldl (\r d -> r + overlap d) 0 $ zip ds1 ds2
+  where ((d1,d2),(d3,d4)) = diagonals t
+        ds1 = mergeRows ( transpose $ process <$> d1
+                        , transpose $ process <$> d2
+                        )
+        ds2 = mergeRows ( transpose $ process <$> d4
+                        , transpose $ process <$> d3
+                        )
 
 main :: IO()
 main = do
